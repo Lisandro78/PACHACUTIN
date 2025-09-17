@@ -1,85 +1,93 @@
 from flask import Blueprint, request, jsonify, current_app
-import time, os, json
+import time
+
 bp = Blueprint('api', __name__)
 
-# Compatibility endpoints preserved:
-# /sensors?t=TIMESTAMP   -> returns same JSON your AppInventor expects
-# /recommendation?t=...  -> proxies to internal recommender if present
-# /capture               -> triggers camera capture
-# /cmd?c=A               -> send letter to Arduino (only if control active)
-# /mode?m=sensors|monitor|control|idle
-
+# =========================
+# /mode  (activa módulos)
+# =========================
 @bp.route('/mode', methods=['GET'])
 def mode():
     token = request.args.get('token') or request.headers.get('X-API-Token')
     if token != current_app.config.get('AUTH_TOKEN'):
-        return jsonify({'ok': False, 'error': 'token inválido'}), 403
-    m = (request.args.get('m') or '').lower()
+        return jsonify({'ok': False, 'error': 'forbidden'}), 403
+
+    m = (request.args.get('m') or '').lower().strip()
     if not m:
-        return jsonify({'ok': False, 'error': "falta parámetro 'm'"}), 400
+        return jsonify({'ok': False, 'error': "missing param 'm'"}), 400
+    if m not in ('idle', 'sensors', 'monitor', 'control', 'soil'):
+        return jsonify({'ok': False, 'error': 'unknown mode'}), 400
+
     mgr = current_app.module_manager
     if m == 'idle':
         mgr.stop_all()
         return jsonify({'ok': True, 'mode': 'idle'})
-    # allowed modes
-    if m not in ('sensors','monitor','control','soil'):
-        return jsonify({'ok': False, 'error': 'modo desconocido'}), 400
-    res = mgr.set_mode(m)
-    return jsonify(res)
 
+    res = mgr.set_mode(m)
+    return jsonify(res), (200 if res.get('ok') else 500)
+
+# =========================
+# /sensors  (compat App Inventor)
+# =========================
 @bp.route('/sensors', methods=['GET'])
 def sensors():
-    # original AppInventor calls like /sensors?t=timestamp
-    token = request.args.get('t')  # keep compatibility, token not required here
-    # return last sensor reading from manager
+    # Mantiene compat: App Inventor ya pasa ?t=<timestamp>
     data = current_app.module_manager.get_sensor_data()
-    # ensure fields your app expects exist
     resp = {
-        'soil_type': data.get('soil_type','not found'),
-        'temperature': data.get('temperature','not found'),
-        'soil_moisture': data.get('soil_moisture','not found'),
-        'air_humidity': data.get('air_humidity','not found'),
-        # meta
-        'ts': data.get('ts', time.strftime('%Y%m%d%H%M%S'))
+        'soil_type':     data.get('soil_type', 'not found'),
+        'temperature':   data.get('temperature', 'not found'),
+        'soil_moisture': data.get('soil_moisture', 'not found'),
+        'air_humidity':  data.get('air_humidity', 'not found'),
+        'ts':            data.get('ts', time.strftime('%Y%m%d%H%M%S')),
     }
     return jsonify(resp)
 
-@bp.route('/recommendation', methods=['GET','POST'])
+# =========================
+# /recommendation  (opcional)
+# =========================
+@bp.route('/recommendation', methods=['GET', 'POST'])
 def recommendation():
-    # keep same interface as before (/recommendation?t=...)
-    # try to call existing recommender in pachacutin_ai if available
+    payload = request.get_json(silent=True) or dict(request.args)
     try:
-        from pachacutin_ai.recommender import get_recommendation
-        # prepare payload from query or json
-        payload = request.get_json(silent=True) or dict(request.args)
-        res = get_recommendation(payload)
-        return jsonify({'recommendation': res})
+        # Si tienes un módulo propio de recomendación, impórtalo aquí:
+        # from pachacutin_ai.recommender import get_recommendation
+        # res = get_recommendation(payload)
+        # return jsonify({'recommendation': res})
+        return jsonify({'recommendation': 'no_recommender_available', 'echo': payload})
     except Exception as e:
-        # fallback: echo inputs (keeps compatibility)
-        return jsonify({'recommendation': 'no_recommender_available', 'error': str(e)})
+        return jsonify({'recommendation': 'error', 'error': str(e)}), 500
 
-@bp.route('/capture', methods=['POST','GET'])
+# =========================
+# /capture (GET y POST)
+# =========================
+@bp.route('/capture', methods=['GET', 'POST'])
 def capture():
-    # triggers camera capture in CamModule (if active)
     mgr = current_app.module_manager
     ok, info = mgr.capture_image()
     if ok:
         return jsonify({'ok': True, 'path': info})
-    else:
-        return jsonify({'ok': False, 'error': info}), 500
+    return jsonify({'ok': False, 'error': info}), 500
 
-@bp.route('/cmd', methods=['GET','POST'])
+# =========================
+# /cmd  (puente App→Python→Arduino)
+# =========================
+@bp.route('/cmd', methods=['GET', 'POST'])
 def cmd():
     token = request.args.get('token') or request.headers.get('X-API-Token')
     if token != current_app.config.get('AUTH_TOKEN'):
-        return jsonify({'ok': False, 'error': 'token inválido'}), 403
-    # support GET ?c=A and POST json {"c":"A"}
-    c = request.args.get('c') or (request.get_json(silent=True) or {}).get('c')
+        return jsonify({'ok': False, 'error': 'forbidden'}), 403
+
+    c = request.args.get('c') or ((request.get_json(silent=True) or {}).get('c'))
     if not c:
-        return jsonify({'ok': False, 'error': 'no command provided'}), 400
-    c = str(c)[0]
+        return jsonify({'ok': False, 'error': 'missing param c'}), 400
+    c = str(c)[0]  # solo 1 char
+
     mgr = current_app.module_manager
     if not mgr.is_active('control'):
         return jsonify({'ok': False, 'error': 'control mode not active'}), 409
-    mgr.send_to_gateway(c)
-    return jsonify({'ok': True, 'sent': c})
+
+    try:
+        mgr.send_to_gateway(c)
+        return jsonify({'ok': True, 'sent': c})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500

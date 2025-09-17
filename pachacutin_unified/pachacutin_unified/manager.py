@@ -1,52 +1,49 @@
 import threading, time
-from collections import defaultdict
+from . import config
 
 class ModuleManager:
     def __init__(self):
         self._lock = threading.Lock()
-        self._modules = {}
         self._active = set()
         self._sensor_data = {}
-        self._init_modules()
 
-    def _init_modules(self):
-        # Lazy imports to avoid hard failures if module missing
-        try:
-            from .serialhub import SerialHub
-            self._modules['serialhub'] = SerialHub()
-        except Exception as e:
-            print('Warning: SerialHub not available:', e)
-            self._modules['serialhub'] = None
+        # Instancias de módulos (lazy-friendly)
+        from .serialhub import SerialHub
+        self._serialhub = SerialHub(serial_path=None, baud=config.DEFAULT_BAUD)
+
+        # Módulos
         try:
             from .modules.sensor_module import SensorModule
-            self._modules['sensors'] = SensorModule(self._on_sensor_update, self._modules.get('serialhub'))
+            self._sensor_module = SensorModule(self._on_sensor_update, self._serialhub, baud=config.DEFAULT_BAUD)
         except Exception as e:
-            print('SensorModule not available:', e)
-            self._modules['sensors'] = None
+            print("SensorModule not available:", e); self._sensor_module = None
+
         try:
             from .modules.gateway_module import GatewayModule
-            self._modules['control'] = GatewayModule(self._modules.get('serialhub'))
+            self._gateway_module = GatewayModule(self._serialhub)
         except Exception as e:
-            print('GatewayModule not available:', e)
-            self._modules['control'] = None
+            print("GatewayModule not available:", e); self._gateway_module = None
+
         try:
             from .modules.cam_module import CamModule
-            self._modules['monitor'] = CamModule()
+            self._cam_module = CamModule()
         except Exception as e:
-            print('CamModule not available:', e)
-            self._modules['monitor'] = None
+            print("CamModule not available:", e); self._cam_module = None
+
         try:
             from .modules.soil_module import SoilModule
-            self._modules['soil'] = SoilModule()
+            self._soil_module = SoilModule()
         except Exception as e:
-            print('SoilModule not available:', e)
-            self._modules['soil'] = None
+            print("SoilModule not available:", e); self._soil_module = None
 
+    # ---------- Hooks ----------
     def _on_sensor_update(self, data):
         with self._lock:
-            self._sensor_data = dict(data)
-            self._sensor_data['ts'] = time.strftime('%Y%m%d%H%M%S')
+            d = dict(data) if data else {}
+            d['ts'] = time.strftime('%Y%m%d%H%M%S')
+            self._sensor_data = d
 
+    # ---------- API ----------
     def get_sensor_data(self):
         with self._lock:
             return dict(self._sensor_data)
@@ -55,53 +52,68 @@ class ModuleManager:
         return key in self._active
 
     def set_mode(self, mode):
-        with self._lock:
-            # stop all others except serialhub (serialhub can remain running)
-            for k in list(self._active):
-                if k != mode:
-                    self._stop_module(k)
-            # start requested module
-            mod = self._modules.get(mode)
-            if mod is None:
-                return {'ok': False, 'error': f'module {mode} not available'}
-            self._start_module(mode)
-            return {'ok': True, 'mode': mode}
-
-    def _start_module(self, key):
-        mod = self._modules.get(key)
-        if mod and not getattr(mod, 'is_running', False):
-            # ensure serialhub is started before modules that use it
-            if key in ('sensors','control') and self._modules.get('serialhub') is not None:
-                self._modules['serialhub'].start()
-            mod.start()
-            self._active.add(key)
-            print('Module', key, 'started')
-
-    def _stop_module(self, key):
-        mod = self._modules.get(key)
-        if mod and getattr(mod, 'is_running', False):
-            mod.stop()
-            print('Module', key, 'stopped')
-        self._active.discard(key)
-        # if no serial-using modules active, stop serialhub
-        if 'sensors' not in self._active and 'control' not in self._active:
-            if self._modules.get('serialhub') is not None:
-                self._modules['serialhub'].stop()
+        # Apaga todo menos el requerido
+        for k in list(self._active):
+            if k != mode:
+                self._stop_module(k)
+        # Enciende el solicitado
+        self._start_module(mode)
+        return {'ok': True, 'mode': mode}
 
     def stop_all(self):
-        with self._lock:
-            for k in list(self._active):
-                self._stop_module(k)
+        for k in list(self._active):
+            self._stop_module(k)
 
     def send_to_gateway(self, cmd):
-        mod = self._modules.get('control')
-        if mod:
-            mod.send(cmd)
+        if self._gateway_module:
+            self._gateway_module.send(cmd)
         else:
-            raise RuntimeError('gateway module not available')
+            raise RuntimeError("gateway module not available")
 
     def capture_image(self):
-        mod = self._modules.get('monitor')
-        if mod and getattr(mod,'is_running', False):
-            return mod.capture()
+        if self._cam_module and getattr(self._cam_module, 'is_running', False):
+            return self._cam_module.capture()
         return (False, 'monitor not active')
+
+    # ---------- Internos ----------
+    def _start_module(self, key):
+        if key == 'sensors' and self._sensor_module:
+            self._serialhub.start()
+            self._sensor_module.start()
+            self._active.add('sensors')
+            print('Module sensors started')
+        elif key == 'control' and self._gateway_module:
+            self._serialhub.start()
+            self._gateway_module.start()
+            self._active.add('control')
+            print('Module control started')
+        elif key == 'monitor' and self._cam_module:
+            self._cam_module.start()
+            self._active.add('monitor')
+            print('Module monitor started')
+        elif key == 'soil' and self._soil_module:
+            self._soil_module.start()
+            self._active.add('soil')
+            print('Module soil started')
+
+    def _stop_module(self, key):
+        if key == 'sensors' and self._sensor_module and self._sensor_module.is_running:
+            self._sensor_module.stop()
+            self._active.discard('sensors')
+            print('Module sensors stopped')
+        elif key == 'control' and self._gateway_module and self._gateway_module.is_running:
+            self._gateway_module.stop()
+            self._active.discard('control')
+            print('Module control stopped')
+        elif key == 'monitor' and self._cam_module and self._cam_module.is_running:
+            self._cam_module.stop()
+            self._active.discard('monitor')
+            print('Module monitor stopped')
+        elif key == 'soil' and self._soil_module and self._soil_module.is_running:
+            self._soil_module.stop()
+            self._active.discard('soil')
+            print('Module soil stopped')
+
+        # Cierra serial si ni sensors ni control están activos
+        if 'sensors' not in self._active and 'control' not in self._active:
+            self._serialhub.stop()

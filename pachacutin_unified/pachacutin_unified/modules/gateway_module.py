@@ -23,7 +23,6 @@ class GatewayModule:
         self.is_running = False
 
     def send(self, cmd):
-        # put to queue
         self._q.put(cmd)
 
     def _run(self):
@@ -36,5 +35,5 @@ class GatewayModule:
                 try:
                     self.serialhub.send(cmd)
                 except Exception as e:
-                    print('Gateway send error', e)
+                    print('Gateway send error:', e)
             time.sleep(0.01)
