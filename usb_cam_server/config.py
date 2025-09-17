@@ -1,0 +1,11 @@
+CAMERA_INDEX = 0
+WIDTH = 640
+HEIGHT = 480
+FPS = 15
+JPEG_QUALITY = 70
+
+HOST = "0.0.0.0"
+PORT = 5000
+DEBUG = False
+
+CAPTURE_DIR = "static/captures"
