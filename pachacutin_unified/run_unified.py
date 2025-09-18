@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
+import logging
+
 from pachacutin_unified.server import create_app
 from pachacutin_unified.manager import ModuleManager
 from pachacutin_unified import config
-import logging
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
