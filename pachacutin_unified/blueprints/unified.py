@@ -1,18 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-pachacutin_unified/blueprints/unified.py
-Blueprint principal con endpoints:
-- /mode          -> activar monitor / sensors / control / idle
-- /live, /video_feed
-- /sensors
-- /capture       -> guarda imagen y ejecuta clasificación (actualiza soil_type)
-- /captures/<name>
-- /classify_soil
-- /set_soil_type
-- /recommendation
-- /cmd           -> envía letra al Arduino y devuelve lo que respondió
-- /debug_cam     -> estado rápido del streamer
-"""
 import os
 import time
 import logging
@@ -22,12 +7,12 @@ from pachacutin_unified.config import TOKEN, CAPTURE_DIR
 from pachacutin_unified.blueprints.video import streamer
 from pachacutin_unified.services.sensor_manager import sensors
 from pachacutin_unified.services.serial_bridge import serial_bridge
-from pachacutin_unified.services.soil_classifier import classify_soil_from_bgr_image
+# Comentamos la importación del clasificador
+# from pachacutin_unified.services.soil_classifier import classify_soil_from_bgr_image
 from pachacutin_unified.services.recommender import get_recommendation
 
 logger = logging.getLogger(__name__)
 unified_bp = Blueprint("unified", __name__)
-
 
 # -------------------- MODO / ACTIVACIÓN POR PANTALLA --------------------
 @unified_bp.route("/mode")
@@ -125,13 +110,10 @@ def capture():
         except Exception:
             logger.exception("No se pudo escribir archivo de captura")
 
-    # Ejecutar clasificación sobre el frame y actualizar soil_type
-    try:
-        soil = classify_soil_from_bgr_image(frame)
-        sensors.set_soil_type(soil)
-        logger.info("Soil classified on capture: %s", soil)
-    except Exception:
-        logger.exception("Soil classification failed on capture")
+    # Omitimos la clasificación de suelo
+    soil = "not found"
+    sensors.set_soil_type(soil)
+    logger.info("Soil classified on capture: %s", soil)
 
     base = request.host_url.rstrip("/")
     full_url = f"{base}/captures/{filename}"
@@ -139,7 +121,7 @@ def capture():
         "ok": True,
         "filename": filename,
         "full_url_nocache": f"{full_url}?ts={ts_ms}",
-        "soil_type": sensors.soil_type
+        "soil_type": soil
     }), 200
 
 
@@ -155,18 +137,15 @@ def classify_soil():
     frame = streamer.get_frame()
     if frame is None:
         return jsonify({"ok": False, "error": "no_frame"}), 500
-    try:
-        soil = classify_soil_from_bgr_image(frame)
-        sensors.set_soil_type(soil)
-        return jsonify({"ok": True, "soil_type": soil}), 200
-    except Exception:
-        logger.exception("Error en classify_soil")
-        return jsonify({"ok": False, "error": "classification_failed"}), 500
+    # Omitimos la clasificación de suelo
+    soil = "not found"
+    sensors.set_soil_type(soil)
+    return jsonify({"ok": True, "soil_type": soil}), 200
 
 
 @unified_bp.route("/set_soil_type")
 def set_soil_type():
-    soil = request.args.get("soil_type", "").strip() or "Desconocido"
+    soil = request.args.get("soil_type", "").strip() or "not found"
     sensors.set_soil_type(soil)
     return jsonify({"ok": True, "soil_type": soil}), 200
 

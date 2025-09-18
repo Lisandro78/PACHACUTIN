@@ -1,16 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-SensorManager actualizado para leer las líneas JSON que envía tu Arduino:
-Ejemplos de línea esperada:
-  {"soil_moisture":69}
-  {"soil_moisture":56}
-
-- soil_moisture: se obtiene SOLO desde serial (JSON). Si aún no llega lectura válida, será None.
-- temperature: aleatorio suave 15.0..18.0 °C
-- air_humidity: aleatorio suave 80..85 %
-- start() activa el hilo; stop() lo pausa.
-"""
-
 import json
 import time
 import random
@@ -36,8 +23,8 @@ class SensorManager:
         # soil_moisture solo desde Arduino JSON
         self.soil_moisture: Optional[int] = None
 
-        # Añadido: tipo de suelo (por defecto)
-        self.soil_type: str = "Desconocido"
+        # soil_type será "not found" ya que no se usará clasificador
+        self.soil_type: str = "not found"
 
         # env randoms (rango pedido)
         self.temperature: float = 16.5  # midpoint 15..18
@@ -70,21 +57,14 @@ class SensorManager:
         self._ser = None
 
     def _parse_moist_from_line(self, line: str) -> Optional[int]:
-        """
-        Espera una línea JSON con clave 'soil_moisture'.
-        Ej: {"soil_moisture":69}
-        Si no es JSON válido o no contiene la clave, retorna None.
-        """
         if not line:
             return None
         line = line.strip()
         try:
-            # Si la línea comienza con '{' intentamos parsear JSON
             if line.startswith("{"):
                 obj = json.loads(line)
                 if isinstance(obj, dict) and "soil_moisture" in obj:
                     v = obj["soil_moisture"]
-                    # aceptar números o strings numéricos
                     try:
                         v = int(v)
                     except:
@@ -93,7 +73,6 @@ class SensorManager:
         except Exception as e:
             _log.debug("JSON parse error: %s | line: %s", e, line)
             return None
-        # no JSON válido con soil_moisture
         return None
 
     def _read_serial_line(self) -> Optional[str]:
@@ -148,7 +127,6 @@ class SensorManager:
                 else:
                     _log.debug("Linea serial sin soil_moisture: %s", line)
             else:
-                # si no hay lectura, NO emulamos soil_moisture (se mantiene valor previo o None)
                 pass
 
             # actualizar temperatura y humedad de aire
@@ -173,14 +151,11 @@ class SensorManager:
 
     def get_payload(self):
         return {
-            "soil_type": self.soil_type,
+            "soil_type": self.soil_type,  # Ya no hace nada
             "temperature": round(self.temperature, 1),
             "soil_moisture": (int(self.soil_moisture) if self.soil_moisture is not None else None),
             "air_humidity": int(self.air_humidity),
         }
-
-    def set_soil_type(self, s: str):
-        self.soil_type = s or "Desconocido"
 
 # instancia compartida
 sensors = SensorManager()
