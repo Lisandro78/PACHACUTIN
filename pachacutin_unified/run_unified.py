@@ -1,18 +1,28 @@
-#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 import logging
+from flask import Flask
+from flask_cors import CORS
 
-from pachacutin_unified.server import create_app
-from pachacutin_unified.manager import ModuleManager
-from pachacutin_unified import config
+from pachacutin_unified.config import HOST, PORT, DEBUG
+from pachacutin_unified.blueprints.unified import unified_bp
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s [%(levelname)s] %(message)s")
 
-def main():
-    mgr = ModuleManager()
-    app = create_app(mgr)
-    app.module_manager = mgr
-    logging.info(f"Starting unified server on 0.0.0.0:{config.HTTP_PORT}")
-    app.run(host='0.0.0.0', port=config.HTTP_PORT)
+def create_app():
+    app = Flask(__name__)
+    CORS(app)
 
-if __name__ == '__main__':
-    main()
+    @app.after_request
+    def _no_cache(resp):
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
+        return resp
+
+    app.register_blueprint(unified_bp)
+    return app
+
+if __name__ == "__main__":
+    app = create_app()
+    app.run(host=HOST, port=PORT, debug=DEBUG)
